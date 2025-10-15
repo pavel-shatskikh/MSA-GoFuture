@@ -1,0 +1,29 @@
+
+@startuml GoFuture-Multitenant-Onboarding-C3
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Dynamic.puml
+LAYOUT_WITH_LEGEND()
+
+Person(partner_admin, "Partner Admin", "Инициирует онбординг")
+Container(iam, "IAM/SSO", "Keycloak", "OIDC")
+Container(onb_portal, "Onboarding Portal", "Web App", "подключение")
+Container(tenant_catalog, "Tenant Catalog", "Service", "Регистрация тенанта")
+Container(tenant_operator, "Tenant Operator", "K8s Operator/ArgoCD", "Провиженинг ресурсов")
+Container(provisioner, "Infra Provisioner", "Terraform", "Создание DB/Topics/KMS/Secrets")
+Container(apigw, "API Gateway", "Ingress", "Rate limits, routing")
+Container(cp_config, "Config/Flags", "Service", "Для tenant настройки")
+Container(obs, "Observability", "Grafana/Prometheus", "Дашборды/алерты per-tenant")
+Container(iam_client, "SSO Client (Partner IdP)", "OIDC/SAML", "вход")
+
+Rel(partner_admin, onb_portal, "1. Заполняет заявку, домен, контакты")
+Rel(onb_portal, iam, "2. Создать/связать IdP клиента (OIDC/SAML), группы/роли")
+Rel(iam, iam_client, "3. Настроить федерацию и SSO")
+Rel(onb_portal, tenant_catalog, "4. Создать запись тенанта (план, квоты)")
+Rel(tenant_catalog, tenant_operator, "5. CRD: desired state (namespace, quotas, secrets)")
+Rel(tenant_operator, provisioner, "6. Создать DB/schema, Kafka topics t.<tenant>.*, KMS keys, S3 bucket")
+Rel(tenant_operator, apigw, "7. Конфиг роутинга и rate-limits")
+Rel(tenant_operator, cp_config, "8. Управление тоглами/конфигами")
+Rel(tenant_operator, obs, "9. Создать дашборды/алерты с фильтром tenant_id")
+Rel(onb_portal, partner_admin, "10. Выдать адреса, SSO метаданные, API keys; запустить smoke")
+
+SHOW_LEGEND()
+@enduml

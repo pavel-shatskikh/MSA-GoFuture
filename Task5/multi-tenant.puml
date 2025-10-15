@@ -1,0 +1,95 @@
+
+@startuml GoFuture-Multitenant-C2
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+AddElementTag("cp", $fontColor="white", $bgColor="#0d47a1")
+AddElementTag("dp", $fontColor="white", $bgColor="#1565c0")
+AddElementTag("iam", $fontColor="white", $bgColor="#6a1b9a")
+AddElementTag("obs", $fontColor="white", $bgColor="#455a64")
+AddElementTag("data", $fontColor="white", $bgColor="#2e7d32")
+AddElementTag("edge", $fontColor="white", $bgColor="#4a148c")
+AddElementTag("tenant", $fontColor="white", $bgColor="#ef6c00")
+
+Person(partner_admin, "Partner Admin", "SSO вход, управляет своим тенантом")
+Person(gf_ops, "GoFuture Ops/SRE", "Управление платформой")
+
+Container(apigw, "API Gateway / Ingress", "Nginx", "Tenant-aware routing, rate limits, WAF", $tags="edge")
+
+Rel(partner_admin, apigw, "SSO / API", "HTTPS/OIDC")
+Rel(gf_ops, apigw, "Admin/API", "HTTPS/mTLS")
+
+System_Boundary(cp, "Администрирование тенантами") {
+  Container(iam, "IAM & SSO", "Keycloak/Auth0", "OIDC/SAML SSO, RBAC, SCIM", $tags="iam,cp")
+  Container(tenant_catalog, "Tenant Catalog", "PostgreSQL + Service", "Реестр тенантов, планы, лимиты", $tags="cp")
+  Container(tenant_operator, "Tenant Operator", "K8s Operator/ArgoCD", "Автопровиженинг: namespaces, квоты, кофиги", $tags="cp")
+  Container(provisioner, "Infra Provisioner", "Terraform/Ansible", "БД/топики/ключи/секреты", $tags="cp")
+  Container(configsvc, "Config/Flags", "Config Service", "Фичи/настройки per-tenant", $tags="cp")
+  Container(audit, "Audit Log", "WORM Storage", "Аудит действий", $tags="cp")
+}
+
+Rel(apigw, iam, "SSO redirect, token mint", "OIDC/SAML")
+Rel(iam, tenant_catalog, "Fetch tenant mapping", "SQL/REST")
+Rel(tenant_catalog, tenant_operator, "Desired state (CRDs)", "gRPC/HTTP")
+Rel(tenant_operator, provisioner, "Provision resources", "Webhook/CLI")
+Rel(tenant_operator, configsvc, "Seed feature flags", "HTTP")
+Rel(tenant_operator, audit, "Write admin events", "Append-only")
+
+System_Boundary(obs, "Observability") {
+  Container(prom, "Prometheus + Alertmanager", "Prometheus", "Метрики с лейблом tenant_id", $tags="obs")
+  Container(graf, "Grafana", "Grafana", "Папки/дашборды per-tenant + глобальные", $tags="obs")
+  Container(loki, "Loki", "Loki", "Логи с label tenant_id", $tags="obs")
+  Container(tempo, "Tempo/Jaeger", "Tracing", "Трейсы с атрибутом tenant_id", $tags="obs")
+  Container(usage, "Usage/Cost Exporter", "Exporter", "Метрики потребления по тенанту", $tags="obs")
+}
+Rel(prom, graf, "Dashboards")
+Rel(loki, graf, "Explore logs")
+Rel(tempo, graf, "Explore traces")
+Rel(usage, prom, "Usage metrics")
+
+System_Boundary(dp, "Общий контейнер тенанта обработки запросов") {
+  Container(kafka, "Kafka (Multitenant)", "Kafka", "Топики: t.<tenant>.<domain>.*.v1; ACL/квоты", $tags="dp")
+  Container(booking, "Booking", "Kotlin", "Tenant-isolated logic", $tags="dp,tenant")
+  Container(driver, "Driver", "Kotlin", "Tenant-isolated logic", $tags="dp,tenant")
+  Container(pricing, "Pricing", "Kotlin", "Tenant-isolated logic", $tags="dp,tenant")
+  Container(payments, "Payments (PCI Zone)", "Kotlin", "Изолированный контур по PCI", $tags="dp,tenant")
+  Container(geo, "Geography", "Python", "Tenant-aware", $tags="dp,tenant")
+  Container(fraud, "Fraud", "Kotlin", "Tenant-aware", $tags="dp,tenant")
+  Container(notification, "Notification", "Kotlin", "Tenant-aware", $tags="dp,tenant")
+
+  ContainerDb(pg_tenant, "Tenant Data Stores", "PostgreSQL", "Изоляция:\n• DB-per-tenant (крупные)\n• Schema-per-tenant\n", $tags="data,tenant")
+  ContainerDb(ch_tenant, "Analytics (ClickHouse)", "ClickHouse", "БД per-tenant или общая с db-per-tenant", $tags="data,tenant")
+  ContainerDb(redis_tenant, "Cache", "Redis", "Keyspace per-tenant / ACL", $tags="data,tenant")
+  ContainerDb(es_tenant, "Search/Geo", "Elasticsearch", "Индексы per-tenant", $tags="data,tenant")
+}
+
+Rel(apigw, booking, "Tenant JWT (claims: tenant_id, roles)", "HTTP/mTLS")
+Rel(apigw, pricing, "Tenant JWT", "HTTP/mTLS")
+Rel(apigw, payments, "Tenant JWT", "HTTP/mTLS")
+Rel(apigw, fraud, "Tenant JWT", "HTTP/mTLS")
+
+Rel(iam, apigw, "Introspect/JWKS", "OIDC")
+Rel(iam, prom, "Auth for dashboards", "SSO")
+
+Rel(booking, kafka, "Publish/consume t.<tenant>.booking.events.v1")
+Rel(pricing, kafka, "Publish/consume t.<tenant>.pricing.*.v1")
+Rel(payments, kafka, "Publish/consume t.<tenant>.payments.events.v1")
+Rel(driver, kafka, "Publish driver/location t.<tenant>.*.v1")
+Rel(fraud, kafka, "Consume multi-topics by tenant")
+
+Rel(booking, pg_tenant, "CRUD (tenant isolated)")
+Rel(pricing, pg_tenant, "Read/Write (tenant isolated)")
+Rel(payments, pg_tenant, "PCI subset (tokenized)")
+Rel(geo, es_tenant, "Geo index per-tenant")
+Rel(fraud, ch_tenant, "Write risk facts per-tenant")
+Rel(booking, ch_tenant, "Write booking facts per-tenant")
+Rel(pricing, redis_tenant, "Cache per-tenant")
+
+Rel(booking, prom, "Metrics{tenant_id=...}")
+Rel(booking, loki, "Logs{tenant_id=...}")
+Rel(booking, tempo, "Traces{tenant_id=...}")
+Rel(kafka, usage, "Bytes, records per-tenant")
+Rel(pg_tenant, usage, "Storage per-tenant")
+
+SHOW_LEGEND()
+@enduml
