@@ -1,0 +1,135 @@
+
+@startuml GoFuture-EventPlatform-C2-C4-Single-Region-ToBe
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+AddElementTag("platform", $fontColor="white", $bgColor="#0d47a1")
+AddElementTag("domain", $fontColor="white", $bgColor="#1565c0")
+AddElementTag("stream", $fontColor="white", $bgColor="#2e7d32")
+AddElementTag("data", $fontColor="white", $bgColor="#00695c")
+AddElementTag("edge", $fontColor="white", $bgColor="#4a148c")
+AddElementTag("bff", $fontColor="white", $bgColor="#6a1b9a")
+AddElementTag("obs", $fontColor="white", $bgColor="#455a64")
+AddElementTag("saga", $fontColor="white", $bgColor="#1b5e20")
+AddElementTag("reliability", $fontColor="white", $bgColor="#ef6c00")
+
+AddRelTag("event", $textColor="#ef6c00", $lineColor="#ef6c00", $lineStyle="Bold")
+AddRelTag("eos", $textColor="#1b5e20", $lineColor="#1b5e20", $lineStyle="Bold")
+AddRelTag("retry", $textColor="#f4511e", $lineColor="#f4511e", $lineStyle="Dashed")
+
+Person(passenger, "Passenger", "Оформляет поездки")
+Person(driver, "Driver", "Передаёт локацию, принимает заказы")
+Person(corp, "Corporate Admin", "Управляет корпоративными поездками")
+
+Container(passapp, "Passenger App", "iOS/Android/HMS", "Мобильное приложение")
+Container(driverapp, "Driver App", "iOS/Android/HMS", "Мобильное приложение")
+Container(corpweb, "Corporate Portal", "React", "Веб-портал")
+
+Container(apigw, "API Gateway / Ingress", "Gateway/Nginx", "Маршрутизация, auth, rate-limit", $tags="edge")
+Container(bffp, "BFF: Passenger", "Kotlin", "Адаптация API", $tags="bff")
+Container(bffd, "BFF: Driver", "Kotlin", "Адаптация API", $tags="bff")
+Container(bffc, "BFF: Corporate", "Kotlin", "Адаптация API", $tags="bff")
+
+Rel(passenger, passapp, "Использует")
+Rel(driver, driverapp, "Использует")
+Rel(corp, corpweb, "Использует")
+
+Rel(passapp, apigw, "HTTPS/REST")
+Rel(driverapp, apigw, "HTTPS/REST")
+Rel(corpweb, apigw, "HTTPS/REST")
+
+Rel(apigw, bffp, "Route", "REST")
+Rel(apigw, bffd, "Route", "REST")
+Rel(apigw, bffc, "Route", "REST")
+
+System_Boundary(platform, "Event Platform (Single Region, To-Be)") {
+
+  Container(kafka, "Kafka", "Kafka", "Шина событий: топики *.v1", $tags="platform")
+  Container(schemareg, "Schema Registry", "Apicurio/Confluent", "Контракты (Avro/Protobuf)", $tags="platform")
+
+  Container(retry5,  "Retry-5s / Retry-30s", "Kafka Topics", "Повторные попытки с задержкой", $tags="reliability")
+  Container(dlq,     "DLQ", "Kafka Topics", "Необрабатываемые сообщения", $tags="reliability")
+  Container(outbox,  "Transactional Outbox", "Lib + table", "Гарантированная публикация (atomic write + publish)", $tags="reliability")
+
+  Rel(kafka, schemareg, "Register/Validate", "", $tags="event")
+  Rel(retry5, kafka, "Back to main topics", "", $tags="retry")
+  Rel(dlq, kafka, "Ops triage", "", $tags="retry")
+}
+
+System_Boundary(domains, "Domain Services (Single Region, To-Be)") {
+
+  Container(booking, "Booking Service (Saga Orchestrator)", "Kotlin or Java", "Оркестровая сага, команды/реплаи", $tags="domain,saga")
+  Container(driversvc, "Driver Service", "Kotlin", "Статусы/локации", $tags="domain")
+  Container(pricing, "Pricing Service", "Kotlin", "Счёт цен, surge", $tags="domain")
+  Container(payments, "Payments Service", "Kotlin", "Оплаты/возвраты", $tags="domain")
+  Container(notify, "Notification Service", "Kotlin", "FCM/APNS/SMS/e-mail и тд", $tags="domain")
+  Container(geo, "Geography Service", "Python", "Геопоиск/ETA", $tags="domain")
+  Container(fraud, "Fraud Service", "Kotlin", "Риск-скоринг", $tags="domain")
+
+  Container(flink_prc, "Flink: Dynamic Pricing", "Flink", "Потоковый расчёт surge", $tags="stream")
+  Container(flink_match, "Flink: Driver Matching", "Flink", "Кандидаты/feature-join", $tags="stream")
+  Container(kstreams_book, "Kafka Streams: Booking Saga", "Kafka Streams", "Композиция команд/реплаев", $tags="stream")
+  Container(flink_fraud, "Flink: Fraud Features/Score", "Flink", "Фичи и скоринг", $tags="stream")
+
+  ContainerDb(ch, "ClickHouse (OLAP)", "ClickHouse", "Сырьевые события/витрины", $tags="data")
+  ContainerDb(es, "Elasticsearch", "Elasticsearch", "Поиск/гео", $tags="data")
+}
+
+Rel(bffp, booking, "REST", "Create booking, etc.")
+Rel(bffd, driversvc, "REST", "Update location/status")
+Rel(bffc, booking, "REST", "Corp booking")
+
+Rel_D(booking, kafka, "Publish booking.events.v1\nBookingCreated.v1, BookingStatusChanged.v1", "", $tags="event,eos")
+Rel_D(driversvc, kafka, "Publish driver.location.updated.v1", "", $tags="event")
+Rel_D(pricing, kafka, "Publish pricing.surge.updated.v1", "", $tags="event")
+Rel_D(payments, kafka, "Publish payments.events.v1", "", $tags="event")
+Rel_D(fraud, kafka, "Publish fraud.events.v1", "", $tags="event")
+Rel_D(geo, kafka, "Publish geo.events.v1 (EtaCalculated.v1)", "", $tags="event")
+
+Rel(outbox, booking, "Append & publish (atomic)", "DB tx", $tags="eos")
+
+Rel_D(kstreams_book, kafka, "Consume commands/replies/events", "", $tags="event,eos")
+Rel_D(flink_prc, kafka, "Consume demand/supply", "", $tags="event")
+Rel_D(flink_match, kafka, "Consume driver.location + surge", "", $tags="event")
+Rel_D(flink_fraud, kafka, "Consume payments/booking/user", "", $tags="event")
+
+Rel_D(flink_prc, kafka, "Produce pricing.surge.updated.v1", "", $tags="event")
+Rel_D(flink_match, kafka, "Produce booking.dispatch.suggestions.v1", "", $tags="event")
+Rel_D(flink_fraud, kafka, "Produce fraud.decision.v1", "", $tags="event")
+
+Rel_D(booking, kafka, "Produce booking.commands.v1", "", $tags="event")
+Rel_D(payments, kafka, "Consume commands\nProduce booking.replies.v1 (PaymentAuthorized.v1/Failed.v1)", "", $tags="event")
+Rel_D(driversvc, kafka, "Consume commands\nProduce booking.replies.v1 (DriverAllocated.v1/Failed.v1)", "", $tags="event")
+Rel_D(geo, kafka, "Consume commands\nProduce booking.replies.v1 (EtaCalculated.v1)", "", $tags="event")
+Rel_D(kstreams_book, booking, "Callback to orchestrator (state store)", "gRPC/HTTP", $tags="event")
+
+Rel_D(kafka, ch, "Sink: Kafka->ClickHouse (Connect/Flink)", "", $tags="event")
+Rel_D(kafka, es, "Sink: Kafka->Elasticsearch (Connect)", "", $tags="event")
+
+Rel_D(kafka, retry5, "Route on failure (headers policy)", "", $tags="retry")
+Rel_D(kafka, dlq, "Route after max retries", "", $tags="retry")
+
+System_Boundary(obs, "Observability & Monitoring") {
+  Container(prom, "Prometheus + Alertmanager", "Prometheus", "Сбор метрик, алерты", $tags="obs")
+  Container(graf, "Grafana", "Grafana", "Дашборды", $tags="obs")
+  Container(loki, "Loki", "Loki", "Логи", $tags="obs")
+  Container(otel, "OpenTelemetry Collector", "OTel", "Трейсинг/метрики агрегация", $tags="obs")
+  Container(tempo, "Tempo (Tracing)", "Grafana Tempo/Jaeger", "Трейсы E2E", $tags="obs")
+  Container(kexp, "Kafka Exporter + JMX Exporter", "Exporters", "Lag/ISR/broker метрики", $tags="obs")
+  Container(flinkexp, "Flink Metrics Reporter", "Exporters", "Checkpoint/backpressure", $tags="obs")
+  Container(burrow, "Burrow", "Burrow", "Lag мониторинг consumer groups", $tags="obs")
+  Container(akhq, "AKHQ / Kafka UI", "AKHQ", "Обзор топиков/консьюмеров", $tags="obs")
+}
+
+Rel_D(kafka, kexp, "JMX scrape", "", $tags="event")
+Rel_D(kexp, prom, "Metrics", "", $tags="event")
+Rel_D(burrow, prom, "Lag metrics", "", $tags="event")
+Rel_D(flink_prc, flinkexp, "Metrics", "", $tags="event")
+Rel_D(flinkexp, prom, "Metrics", "", $tags="event")
+Rel_D(prom, graf, "Dashboards", "", $tags="event")
+Rel_D(booking, otel, "Traces/metrics/logs", "", $tags="event")
+Rel_D(otel, tempo, "Spans", "", $tags="event")
+Rel_D(loki, graf, "Logs", "", $tags="event")
+
+SHOW_LEGEND()
+@enduml

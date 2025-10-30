@@ -1,0 +1,124 @@
+@startuml GoFuture-C2-To-Be-C4
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+' ---- стили для красоты ----
+AddElementTag("core", $fontColor="white", $bgColor="#1f78b4")
+AddElementTag("edge", $fontColor="white", $bgColor="#4a148c")
+AddElementTag("bff",  $fontColor="white", $bgColor="#6a1b9a")
+AddElementTag("domain", $fontColor="white", $bgColor="#1565c0")
+AddElementTag("data", $fontColor="white", $bgColor="#2e7d32")
+AddElementTag("async", $fontColor="white", $bgColor="#ef6c00")
+AddElementTag("obs", $fontColor="white", $bgColor="#455a64")
+AddElementTag("external", $fontColor="white", $bgColor="#546e7a")
+
+AddRelTag("v1", $textColor="#b71c1c", $lineColor="#b71c1c", $lineStyle="Dashed")
+AddRelTag("v2", $textColor="#1b5e20", $lineColor="#1b5e20", $lineStyle="Bold")
+AddRelTag("cdc", $textColor="#ef6c00", $lineColor="#ef6c00", $lineStyle="Dashed")
+AddRelTag("async", $textColor="#ef6c00", $lineColor="#ef6c00", $lineStyle="Bold")
+
+Person(passenger, "Passenger", "Заказывает поездки, получает уведомления")
+Person(driver, "Driver", "Принимает заказы, передаёт локацию")
+Person(corp, "Corporate Admin", "Бронирования и отчётность для компаний")
+
+System_Ext(paygw, "Yandex Pay", "Платёжный шлюз", $tags="external")
+System_Ext(maps, "Yandex Maps", "Карты/геокодинг/маршруты", $tags="external")
+System_Ext(fcm, "FCM/APNS/Huawei Push", "Провайдеры пушей", $tags="external")
+System_Ext(banks, "Bank APIs", "Выплаты водителям", $tags="external")
+
+System_Boundary(go, "GoFuture Platform (To‑Be)") {
+  Container(apigw, "API Gateway / Ingress", "Nginx/Gateway", "Routing, authorization, throttling, v1/v2", $tags="edge")
+  Container(bffp, "BFF: Passenger", "Kotlin", "Адаптация API для пассажирского клиента", $tags="bff")
+  Container(bffd, "BFF: Driver", "Kotlin", "Адаптация API для водительского клиента", $tags="bff")
+  Container(bffc, "BFF: Corporate", "Kotlin", "Адаптация API для корпоративного портала", $tags="bff")
+
+  Container(booking, "Booking Service", "Kotlin", "Оркестрация поездки, Sagas, идемпотентность", $tags="domain,core")
+  Container(driversvc, "Driver Service", "Kotlin", "Профили, статусы, телеметрия", $tags="domain")
+  Container(pricing, "Pricing Service", "Kotlin", "Real‑time ценообразование", $tags="domain,core")
+  Container(payments, "Payments Service", "Kotlin", "Токенизация, авторизации, капчуры, возвраты", $tags="domain,core")
+  Container(notify, "Notification Service", "Kotlin", "FCM/APNS/SMS/e-mail и тд", $tags="domain")
+  Container(geo, "Geography Service", "Python/FastAPI", "Геопоиск, ETA, геозоны, роутинг", $tags="domain")
+  Container(fraud, "Fraud Service", "Kotlin", "Риск-скоринг, правила/ML", $tags="domain")
+  Container(analytics, "Analytics Ingest", "Flink/Spark", "Сбор событий доменов", $tags="domain")
+
+  ContainerDb(pg, "PostgreSQL (per‑service)", "PostgreSQL", "Транзакционные БД (изоляция по сервисам)", $tags="data")
+  ContainerDb(es, "Elasticsearch (Geo/FTS)", "Elasticsearch", "Геопоиск/поиск", $tags="data")
+  ContainerDb(ch, "ClickHouse (OLAP)", "ClickHouse", "Аналитика/BI", $tags="data")
+  Container(redis, "Redis", "Redis", "Кэш, сессии, блокировки", $tags="data")
+  Container(s3, "S3‑compatible Storage", "Object Storage", "Чеки, отчёты, артефакты", $tags="data")
+
+  Container(kafka, "Kafka (Event Bus)", "Kafka", "Доменные события/CDC", $tags="async")
+  Container(rmq, "RabbitMQ (Tasks/Commands)", "RabbitMQ/Celery", "Команды и фоновые задачи", $tags="async")
+  Container(schemareg, "Schema Registry", "Confluent/Apicurio", "Контракты событий (Avro/Protobuf)", $tags="async")
+}
+
+System_Boundary(obs, "Observability & Platform") {
+  Container(prom, "Prometheus + Alertmanager", "Prometheus", "Метрики/алерты", $tags="obs")
+  Container(graf, "Grafana", "Grafana", "Дашборды", $tags="obs")
+  Container(loki, "Loki", "Loki", "Централизованные логи", $tags="obs")
+  Container(jenkins, "Jenkins CI/CD", "Jenkins", "Пайплайны и релизы", $tags="obs")
+  Container(flags, "Feature Flags / Config", "Unleash/Config", "Флаги/конфигурация", $tags="obs")
+}
+
+Container(corpweb, "Corporate Portal (Web)", "React", "UI для компаний")
+Container(passapp, "Passenger App", "iOS/Android/HMS", "Мобильное приложение пассажира")
+Container(driverapp, "Driver App", "iOS/Android/HMS", "Мобильное приложение водителя")
+
+Rel(passenger, passapp, "Использует")
+Rel(driver, driverapp, "Использует")
+Rel(corp, corpweb, "Использует")
+
+Rel(passapp, apigw, "HTTPS/REST", "v1/v2")
+Rel(driverapp, apigw, "HTTPS/REST", "v1/v2")
+Rel(corpweb, apigw, "HTTPS/REST", "v1/v2")
+
+Rel(apigw, bffp, "Route (v2)", "REST", $tags="v2")
+Rel(apigw, bffd, "Route (v2)", "REST", $tags="v2")
+Rel(apigw, bffc, "Route (v2)", "REST", $tags="v2")
+
+Rel(bffp, booking, "API calls", "REST", $tags="v2")
+Rel(bffp, pricing, "Quote/Lock Price", "REST", $tags="v2")
+Rel(bffp, notify, "Notifications", "REST", $tags="v2")
+Rel(bffd, driversvc, "Status/Location", "REST", $tags="v2")
+Rel(bffd, notify, "Notifications", "REST", $tags="v2")
+Rel(bffc, booking, "Booking API", "REST", $tags="v2")
+Rel(bffc, payments, "Corporate payments", "REST", $tags="v2")
+
+Rel(booking, pricing, "getQuote()/lockPrice()", "REST", $tags="v2")
+Rel(booking, payments, "auth()/capture()/refund()", "REST", $tags="v2")
+Rel(booking, driversvc, "allocate/dispatch", "REST", $tags="v2")
+Rel(booking, geo, "ETA/route", "REST", $tags="v2")
+Rel(booking, notify, "trip updates", "REST", $tags="v2")
+Rel(driversvc, geo, "nearby/location", "REST", $tags="v2")
+
+Rel_D(booking, rmq, "Commands (allocate, notify)", "", $tags="async")
+Rel_D(booking, kafka, "Domain events (TripCreated…)", "", $tags="async")
+Rel_D(pricing, kafka, "Publish pricing events", "", $tags="async")
+Rel_D(driversvc, kafka, "Driver status/location events", "", $tags="async")
+Rel_D(fraud, kafka, "Consume events; publish risk decisions", "", $tags="async")
+Rel_D(analytics, kafka, "Consume all domain events", "", $tags="async")
+Rel(schemareg, kafka, "Contracts", "", $tags="async")
+
+Rel(booking, pg, "SQL")
+Rel(driversvc, pg, "SQL")
+Rel(pricing, pg, "SQL")
+Rel(payments, pg, "SQL")
+Rel(fraud, pg, "SQL")
+Rel(geo, es, "Geo/FTS")
+Rel(pricing, redis, "Cache (quotes/surge)")
+Rel(driversvc, redis, "Cache (sessions/locks)")
+Rel(analytics, ch, "OLAP ingest")
+Rel_D(fraud, ch, "Feature store / analytics")
+Rel_D(booking, s3, "Artifacts (receipts)")
+
+Rel(payments, paygw, "Tokenize/Auth/Capture", "HTTPS")
+Rel(payments, banks, "Payouts", "HTTPS")
+Rel(geo, maps, "Geocoding/Routes", "HTTPS")
+Rel(notify, fcm, "Push", "HTTPS")
+
+Rel_D(booking, prom, "Metrics")
+Rel_D(booking, loki, "Logs")
+Rel_D(apigw, prom, "Metrics")
+Rel_D(apigw, loki, "Logs")
+Rel(prom, graf, "Dashboards")
+
+@enduml

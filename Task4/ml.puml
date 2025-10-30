@@ -1,0 +1,101 @@
+
+@startuml GoFuture-ML-DataPlatform-C2-Simplified
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+AddElementTag("domain", $fontColor="white", $bgColor="#1565c0")
+AddElementTag("platform", $fontColor="white", $bgColor="#0d47a1")
+AddElementTag("data", $fontColor="white", $bgColor="#00695c")
+AddElementTag("ml", $fontColor="white", $bgColor="#6d4c41")
+AddElementTag("serve", $fontColor="white", $bgColor="#8e24aa")
+AddElementTag("bi", $fontColor="white", $bgColor="#1e88e5")
+AddElementTag("obs", $fontColor="white", $bgColor="#455a64")
+
+Person(passenger, "Passenger", "Мобильное приложение")
+Person(driver, "Driver", "Мобильное приложение")
+Person(corp, "Corporate Analyst", "Смотрит отчёты BI")
+
+Container(passapp, "Passenger App", "iOS/Android/HMS", "Клиентские события")
+Container(driverapp, "Driver App", "iOS/Android/HMS", "Локации/статусы")
+Container(corpweb, "Corporate Portal", "React", "Корпоративные заказы/отчёты")
+Container(apigw, "API Gateway / BFF", "Gateway + BFFs", "Synchronous APIs")
+
+Rel(passenger, passapp, "Использует")
+Rel(driver, driverapp, "Использует")
+Rel(corp, corpweb, "Использует")
+Rel(passapp, apigw, "HTTPS/REST")
+Rel(driverapp, apigw, "HTTPS/REST")
+Rel(corpweb, apigw, "HTTPS/REST")
+
+System_Boundary(domains, "Domain Services") {
+  Container(booking, "Booking", "Kotlin", "События бронирования", $tags="domain")
+  Container(driversvc, "Driver", "Kotlin", "Локации/статусы", $tags="domain")
+  Container(pricing, "Pricing", "Kotlin", "Расчёт цены/котировка", $tags="domain")
+  Container(payments, "Payments", "Kotlin", "Транзакции", $tags="domain")
+  Container(geo, "Geography", "Python", "Геопоиск/ETA", $tags="domain")
+  Container(fraud, "Fraud", "Kotlin", "Онлайн-скоринг риска", $tags="domain")
+}
+
+Rel(apigw, booking, "Create booking", "HTTP/REST")
+Rel(apigw, driversvc, "Update location", "HTTP/REST")
+Rel(apigw, pricing, "Quote/lock price", "HTTP/REST")
+Rel(apigw, payments, "Authorize/Capture", "HTTP/REST")
+
+System_Boundary(platform, "Event & Data Platform") {
+  Container(kafka, "Kafka", "Kafka", "Событийная шина: *.v1", $tags="platform")
+  Container(connect, "Kafka Connect", "Connect", "Синк: ClickHouse, S3, Elasticsearch", $tags="platform")
+  ContainerDb(ch, "ClickHouse (DWH/OLAP)", "ClickHouse", "Данные для BI", $tags="data")
+  Container(s3, "Data Lake (Object Storage)", "S3-compatible", "Исторические данные/датасеты/модели", $tags="data")
+}
+
+Rel(booking, kafka, "Publish booking.events.v1")
+Rel(driversvc, kafka, "Publish driver.location.updated.v1")
+Rel(pricing, kafka, "Publish pricing.surge.updated.v1")
+Rel(payments, kafka, "Publish payments.events.v1")
+Rel(geo, kafka, "Publish geo.events.v1")
+Rel(fraud, kafka, "Publish fraud.events.v1")
+
+Rel(connect, kafka, "Consume")
+Rel(connect, ch, "Sink events → facts")
+Rel(connect, s3, "Sink raw → lake")
+
+System_Boundary(ml, "ML Platform (Minimal)") {
+  Container(spark, "Spark ETL", "Spark", "Подготовка датасетов", $tags="ml")
+  Container(pytrain, "Python Training Workers", "Python (pandas/sklearn/xgboost)", "Тренировки; экспорт ONNX", $tags="ml")
+  Container(modelstore, "Model Store", "S3 (versioned)", "Хранение артефактов .onnx", $tags="ml")
+  Container(onnxserve_prc, "ONNX Serving: Pricing", "FastAPI + onnxruntime", "Онлайн-инференс цены", $tags="serve")
+  Container(onnxserve_frd, "ONNX Serving: Fraud", "FastAPI + onnxruntime", "Онлайн-инференс фрода", $tags="serve")
+  Container(pybatch, "Python Batch Scoring", "Python", "Периодический скоринг/обновление витрин", $tags="ml")
+}
+
+Rel(spark, ch, "Read")
+Rel(spark, s3, "Read/Write (parquet)")
+Rel(pytrain, spark, "Read featuresets")
+Rel(pytrain, ch, "Read aggregates")
+Rel(pytrain, modelstore, "Write .onnx (versioned)")
+Rel(onnxserve_prc, modelstore, "Pull model")
+Rel(onnxserve_frd, modelstore, "Pull model")
+Rel(pybatch, modelstore, "Load model")
+Rel(pybatch, ch, "Write batch predictions")
+
+Rel(pricing, onnxserve_prc, "Online scoring", "HTTP/gRPC")
+Rel(fraud, onnxserve_frd, "Online scoring", "HTTP/gRPC")
+
+System_Boundary(bi, "BI") {
+  Container(datalens, "DataLens", "BI", "Дашборды из ClickHouse", $tags="bi")
+}
+Rel(datalens, ch, "Read (SQL)")
+
+Container(obs, "Observability", "Prometheus + Grafana + Loki + OTel", "Метрики/логи/трейсы", $tags="obs")
+
+Rel(obs, kafka, "Scrape/Logs/Traces")
+Rel(obs, connect, "Scrape/Logs")
+Rel(obs, spark, "Job metrics/logs")
+Rel(obs, pytrain, "Train metrics/logs")
+Rel(obs, onnxserve_prc, "Latency/RPS/errors")
+Rel(obs, onnxserve_frd, "Latency/RPS/errors")
+Rel(obs, ch, "DB metrics")
+Rel(obs, datalens, "Dashboards")
+
+SHOW_LEGEND()
+@enduml

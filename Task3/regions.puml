@@ -1,0 +1,120 @@
+
+@startuml GoFuture-Global-C2
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+LAYOUT_WITH_LEGEND()
+
+AddElementTag("new", $fontColor="white", $bgColor="#c62828", $borderColor="#c62828")
+AddRelTag("newrel", $textColor="#c62828", $lineColor="#c62828", $lineStyle="Bold")
+AddElementTag("region", $fontColor="white", $bgColor="#1565c0")
+AddElementTag("edge", $fontColor="white", $bgColor="#4a148c")
+AddElementTag("domain", $fontColor="white", $bgColor="#1976d2")
+AddElementTag("data", $fontColor="white", $bgColor="#2e7d32")
+AddElementTag("async", $fontColor="white", $bgColor="#ef6c00")
+AddElementTag("obs", $fontColor="white", $bgColor="#455a64")
+AddElementTag("pci", $fontColor="white", $bgColor="#006064")
+
+Person(passenger, "Пассажир", "Мобильное приложение")
+Person(driver, "Водитель", "Мобильное приложение")
+Person(corp, "Корп. админ", "Веб-портал")
+
+Container_Boundary(global, "Глобальный периметр (NEW)") {
+  Container(cdn, "CDN + WAF", "Cloudflare/Akamai", "Anycast, WAF, Bot Mgmt, DDoS", $tags="new")
+  Container(geodns, "GeoDNS / Global Traffic Manager", "Route53/Cloudflare", "Гео-маршрутизация и failover", $tags="new")
+}
+
+Rel(passenger, cdn, "HTTPS", "")
+Rel(driver, cdn, "HTTPS", "")
+Rel(corp, cdn, "HTTPS", "")
+Rel(cdn, geodns, "Edge routing", "", $tags="newrel")
+
+System_Boundary(eu, "Регион EU (Франкфурт)") {
+  Container(apigw_eu, "API GW/Ingress", "Gateway/Nginx", "AuthN/Z, rate limits", $tags="edge,region")
+  Container(waf_eu, "Regional WAF/NGFW", "WAF/Firewall", "Layer7/IPS", $tags="new")
+  Container(k8s_eu, "App Cluster EU", "Kubernetes", "BFF + доменные сервисы", $tags="region")
+  Container(kafka_eu, "Kafka EU", "Kafka", "eu.* topics", $tags="async,region")
+  Container(pg_eu, "PostgreSQL EU", "PostgreSQL", "Per-service DBs", $tags="data,region")
+  Container(redis_eu, "Redis EU", "Redis", "Cache", $tags="data,region")
+  Container(es_eu, "Elasticsearch EU", "Elasticsearch", "Geo/FTS", $tags="data,region")
+  Container(s3_eu, "Object Storage EU", "S3-compatible", "CRR enabled", $tags="data,region")
+}
+
+System_Boundary(sea, "Регион SEA (Сингапур)") {
+  Container(apigw_sea, "API GW/Ingress", "Gateway/Nginx", "AuthN/Z, rate limits", $tags="edge,region")
+  Container(waf_sea, "Regional WAF/NGFW", "WAF/Firewall", "Layer7/IPS", $tags="new")
+  Container(k8s_sea, "App Cluster SEA", "Kubernetes", "BFF + доменные сервисы", $tags="region")
+  Container(kafka_sea, "Kafka SEA", "Kafka", "sea.* topics", $tags="async,region")
+  Container(pg_sea, "PostgreSQL SEA", "PostgreSQL", "Per-service DBs", $tags="data,region")
+  Container(redis_sea, "Redis SEA", "Redis", "Cache", $tags="data,region")
+  Container(es_sea, "Elasticsearch SEA", "Elasticsearch", "Geo/FTS", $tags="data,region")
+  Container(s3_sea, "Object Storage SEA", "S3-compatible", "CRR enabled", $tags="data,region")
+}
+
+System_Boundary(sa, "Регион SA (Сан-Паулу)") {
+  Container(apigw_sa, "API GW/Ingress", "Gateway/Nginx", "AuthN/Z, rate limits", $tags="edge,region")
+  Container(waf_sa, "Regional WAF/NGFW", "WAF/Firewall", "Layer7/IPS", $tags="new")
+  Container(k8s_sa, "App Cluster SA", "Kubernetes", "BFF + доменные сервисы", $tags="region")
+  Container(kafka_sa, "Kafka SA", "Kafka", "sa.* topics", $tags="async,region")
+  Container(pg_sa, "PostgreSQL SA", "PostgreSQL", "Per-service DBs", $tags="data,region")
+  Container(redis_sa, "Redis SA", "Redis", "Cache", $tags="data,region")
+  Container(es_sa, "Elasticsearch SA", "Elasticsearch", "Geo/FTS", $tags="data,region")
+  Container(s3_sa, "Object Storage SA", "S3-compatible", "CRR enabled", $tags="data,region")
+}
+
+Container_Boundary(pci_eu, "PCI Zone EU (NEW)") {
+  Container(pay_eu, "Payments EU", "Kotlin/Spring", "Tokenization/Auth/Capture", $tags="pci,new")
+  Container(hsm_eu, "KMS/HSM EU", "Cloud KMS/HSM", "Keys, envelopes", $tags="pci,new")
+}
+Container_Boundary(pci_sea, "PCI Zone SEA (NEW)") {
+  Container(pay_sea, "Payments SEA", "Kotlin/Spring", "Tokenization/Auth/Capture", $tags="pci,new")
+  Container(hsm_sea, "KMS/HSM SEA", "Cloud KMS/HSM", "Keys, envelopes", $tags="pci,new")
+}
+Container_Boundary(pci_sa, "PCI Zone SA (NEW)") {
+  Container(pay_sa, "Payments SA", "Kotlin/Spring", "Tokenization/Auth/Capture", $tags="pci,new")
+  Container(hsm_sa, "KMS/HSM SA", "Cloud KMS/HSM", "Keys, envelopes", $tags="pci,new")
+}
+
+Rel(geodns, waf_eu, "Primary for EU users", "", $tags="newrel")
+Rel(geodns, waf_sea, "Primary for SEA users", "", $tags="newrel")
+Rel(geodns, waf_sa, "Primary for SA users", "", $tags="newrel")
+
+Rel(waf_eu, apigw_eu, "L7 proxy", "HTTPS", $tags="newrel")
+Rel(waf_sea, apigw_sea, "L7 proxy", "HTTPS", $tags="newrel")
+Rel(waf_sa, apigw_sa, "L7 proxy", "HTTPS", $tags="newrel")
+
+Rel(apigw_eu, k8s_eu, "Route to BFF/services", "mTLS", "")
+Rel(apigw_sea, k8s_sea, "Route to BFF/services", "mTLS", "")
+Rel(apigw_sa, k8s_sa, "Route to BFF/services", "mTLS", "")
+
+Rel(kafka_eu, kafka_sea, "Cluster Linking (selected topics)", "", $tags="newrel")
+Rel(kafka_eu, kafka_sa, "Cluster Linking (selected topics)", "", $tags="newrel")
+Rel(kafka_sea, kafka_sa, "Cluster Linking (selected topics)", "", $tags="newrel")
+
+Rel(pg_eu, pg_sea, "Logical/CDC (per service)", "", $tags="newrel")
+Rel(pg_eu, pg_sa, "Logical/CDC (per service)", "", $tags="newrel")
+
+Rel(es_eu, es_sea, "Cross-cluster replication (geo)", "", $tags="newrel")
+Rel(es_eu, es_sa, "Cross-cluster replication (geo)", "", $tags="newrel")
+
+Rel(s3_eu, s3_sea, "CRR", "", $tags="newrel")
+Rel(s3_eu, s3_sa, "CRR", "", $tags="newrel")
+
+System_Boundary(obs, "Observability") {
+  Container(prom, "Prometheus/Alertmanager", "Prometheus", "Региональные метрики/алерты", $tags="obs")
+  Container(graf, "Grafana", "Grafana", "Глобальные/региональные дашборды", $tags="obs")
+  Container(tempo, "Tracing (Tempo/Jaeger)", "Tempo/Jaeger", "E2E трейсинг", $tags="obs")
+  Container(loki, "Loki", "Loki", "Централизованные логи", $tags="obs")
+  Container(burrow, "Burrow", "Burrow", "Consumer Lag", $tags="obs")
+}
+
+Rel(kafka_eu, burrow, "Lag monitor", "", "")
+Rel(kafka_sea, burrow, "Lag monitor", "", "")
+Rel(kafka_sa, burrow, "Lag monitor", "", "")
+
+Rel(prom, graf, "Dashboards", "", "")
+Rel(tempo, graf, "Traces", "", "")
+Rel(loki, graf, "Logs", "", "")
+
+Rel(corp, geodns, "Admin access (Geo)", "", $tags="newrel")
+
+SHOW_LEGEND()
+@enduml

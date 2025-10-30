@@ -1,0 +1,49 @@
+
+@startuml GoFuture-Failover-C4
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Deployment.puml
+LAYOUT_WITH_LEGEND()
+
+AddElementTag("new", $fontColor="white", $bgColor="#c62828", $borderColor="#c62828")
+AddRelTag("newrel", $textColor="#c62828", $lineColor="#c62828", $lineStyle="Bold")
+AddElementTag("region", $fontColor="white", $bgColor="#1565c0")
+AddElementTag("critical", $fontColor="white", $bgColor="#006064")
+
+Container_Boundary(edge, "Global Edge", "CDN/WAF/GeoDNS", "Anycast, WAF, DNS health checks", $tags="new") {
+  Container(pop, "Edge POPs", "CDN", "Multiple PoPs")
+}
+
+Container_Boundary(eu, "EU Region", "Cloud", "Multi-AZ", $tags="region") {
+  Container(euk8s, "EU k8s", "Kubernetes", "App + BFF")
+  Container(eukafka, "Kafka EU", "Kafka", "RF=3")
+  Container(eudb, "DB EU", "PostgreSQL", "Per-service, Multi-AZ", $tags="critical")
+}
+
+Container_Boundary(sea, "SEA Region", "Cloud", "Multi-AZ", $tags="region") {
+  Container(seak8s, "SEA k8s", "Kubernetes", "App + BFF")
+  Container(seakafka, "Kafka SEA", "Kafka", "RF=3")
+  Container(seadb, "DB SEA", "PostgreSQL", "Per-service, Multi-AZ", $tags="critical")
+}
+
+Container_Boundary(sa, "SA Region", "Cloud", "Multi-AZ", $tags="region") {
+  Container(sak8s, "SA k8s", "Kubernetes", "App + BFF")
+  Container(sakafka, "Kafka SA", "Kafka", "RF=3")
+  Container(sadb, "DB SA", "PostgreSQL", "Per-service, Multi-AZ", $tags="critical")
+}
+
+Rel(edge, euk8s, "Primary for EU", "", $tags="newrel")
+Rel(edge, seak8s, "Primary for SEA", "", $tags="newrel")
+Rel(edge, sak8s, "Primary for SA", "", $tags="newrel")
+
+Rel(eukafka, seakafka, "Cluster Linking (selected topics)", "", $tags="newrel")
+Rel(eukafka, sakafka, "Cluster Linking (selected topics)", "", $tags="newrel")
+Rel(seakafka, sakafka, "Cluster Linking (selected topics)", "", $tags="newrel")
+
+Rel(eudb, seadb, "Logical/CDC per-service", "", $tags="newrel")
+Rel(eudb, sadb, "Logical/CDC per-service", "", $tags="newrel")
+
+Rel(seak8s, euk8s, "Failover target if SEA down", "", $tags="newrel")
+Rel(sak8s, euk8s, "Failover target if SA down", "", $tags="newrel")
+Rel(euk8s, seak8s, "Failover target if EU down", "", $tags="newrel")
+
+SHOW_LEGEND()
+@enduml
